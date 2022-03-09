@@ -5,7 +5,7 @@ import com.example.historisation.domain.Employee;
 import org.javers.spring.annotation.JaversSpringDataAuditable;
 import org.springframework.data.repository.CrudRepository;
 
-@JaversSpringDataAuditable
+// @JaversSpringDataAuditable
 public interface BankDetailsRepository extends CrudRepository<BankDetails, Long> {
 
 

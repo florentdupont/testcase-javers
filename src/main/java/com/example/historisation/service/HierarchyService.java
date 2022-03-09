@@ -5,6 +5,7 @@ import com.example.historisation.domain.Employee;
 import com.example.historisation.repository.BankDetailsRepository;
 import com.example.historisation.repository.EmployeeRepository;
 import lombok.val;
+import org.javers.core.Javers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -21,7 +22,9 @@ public class HierarchyService {
 
     @Autowired
     BankDetailsRepository bankDetailsRepository;
-    
+
+    @Autowired
+    Javers javers;
 
     @Transactional(REQUIRES_NEW)
     public Employee initStructure(){
@@ -42,34 +45,55 @@ public class HierarchyService {
         thorin.addSubordinates(frodo, fili, kili, bifur, bombur);
 
         employeeRepository.save(gandalf);
+        
+        // commit manuel : l'avantage de cette approche est de pouvoir gérer plus finement
+        // notamment si des entités sont dans un état DRAFT par exemple.
+        // dans ce cas, il n'est pas nécessaire de les commiter
+        javers.commit("author", gandalf);
 
         return gandalf;
     }
 
     @Transactional(REQUIRES_NEW)
-    public void giveRaise(Employee employee, int raise) {
+    public void giveRaise(Long employeeId, int raise) {
+        val employee = employeeRepository.findById(employeeId).get();
+                
         employee.giveRaise(raise);
         employeeRepository.save(employee);
+        
+        javers.commit("author", employee);
     }
 
     @Transactional(REQUIRES_NEW)
     public void updateSalary(Employee employee, int salary) {
         employee.updateSalary(salary);
         employeeRepository.save(employee);
+
+        javers.commit("author", employee);
     }
 
     @Transactional(REQUIRES_NEW)
     public void updateCity(Employee employee, String city) {
         employee.getAddress().setCity(city);
         employeeRepository.save(employee);
+
+        javers.commit("author", employee);
     }
 
     @Transactional(REQUIRES_NEW)
-    public void addBankDetails(Employee employee, BankDetails bankDetails) {
+    public void addBankDetails(Long employeeId, BankDetails bankDetails) {
+        
+        val employee = employeeRepository.findById(employeeId).get();
+        
         bankDetailsRepository.save(bankDetails);
         employee.setBankDetails(bankDetails);
         
         employeeRepository.save(employee);
+
+        // est-ce qu'on peux mettre 2 truc dans ce cas ?
+        // ici pas besoin de commiter le BandDetails, comme il est dans le graphe du Employee
+        // alors il est pris en compte
+        javers.commit("author", employee);
     }
 
     public Employee findByName(String name) {
@@ -81,8 +105,11 @@ public class HierarchyService {
     }
 
     @Transactional(REQUIRES_NEW)
-    public void updateBankDetails(Employee frodo, String modified) {
-        val bd = frodo.getBankDetails();
+    public void updateBankDetails(Long employeeId, String modified) {
+        
+        val employee = employeeRepository.findById(employeeId).get();
+        
+        val bd = employee.getBankDetails();
         bd.setIban(modified);
         bankDetailsRepository.save(bd);
        
@@ -92,11 +119,15 @@ public class HierarchyService {
         // et en effet, ca ne change rien !
         // les changements disponible pour Employee ne refleterons pas les changement de BankDetails, 
         // ce qui semble normal car les 2 entités sont indépendantes.
-        employeeRepository.save(frodo);
+        // employeeRepository.save(employee);
         
-        // Il faudrait pouvoir trouver un moyen de propager des modifications, ou alors d'intégrer une modification au 
-        // sein d'un meme "commit". 
+        // en faisant un commit explicite juste sur le employee, le bankDetails est pris en compte car
+        // il fait parti du graphe modifié de employee.
+        // Mais attention, il n'apparaitra pas pour autant dans les Changes du Employee
+        javers.commit("author", employee);
         
+        // lors de la récupération des Changes, il faudra bien récupérer les changements de Employee
+        // puis de BankDetails dans un second temps
         
     }
 }

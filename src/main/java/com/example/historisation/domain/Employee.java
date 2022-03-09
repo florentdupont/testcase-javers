@@ -37,7 +37,7 @@ public class Employee {
     @Embedded
     Address address;
     
-    @ManyToOne
+    @OneToOne(cascade = ALL)
     @Getter @Setter
     BankDetails bankDetails;
                 

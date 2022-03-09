@@ -20,7 +20,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Comparator;
 import java.util.List;
 
 import static java.util.Comparator.comparing;
@@ -45,7 +44,7 @@ public class HierarchyController {
 
         val frodo = service.findByName("Frodo");
 
-        service.giveRaise(frodo, 100);
+        service.giveRaise(frodo.getId(), 100);
     }
     
     
@@ -54,7 +53,7 @@ public class HierarchyController {
 
         val frodo = service.findByName("Frodo");
       
-        service.addBankDetails(frodo, new BankDetails("IBAN0123"));
+        service.addBankDetails(frodo.getId(), new BankDetails("IBAN0123"));
 
     }
 
@@ -63,7 +62,7 @@ public class HierarchyController {
 
         val frodo = service.findByName("Frodo");
 
-        service.updateBankDetails(frodo, "987654");
+        service.updateBankDetails(frodo.getId(), "987654");
 
     }
 
@@ -89,7 +88,8 @@ public class HierarchyController {
     
     @GetMapping("/purge")
     public void purge() {
-        javers.
+        // pour supprimer des Commit, il faudrait attaquer directement les tables jv_commit, etc...
+        // javers.commit()
     }
     
     @GetMapping("/changes") 
