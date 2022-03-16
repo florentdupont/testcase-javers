@@ -3,16 +3,18 @@ package com.example.historisation.controller;
 import com.example.historisation.domain.BankDetails;
 import com.example.historisation.domain.Employee;
 import com.example.historisation.domain.History;
-import com.example.historisation.domain.HistoryEvent;
 import com.example.historisation.service.HierarchyService;
-import jdk.swing.interop.SwingInterOpUtils;
+import com.example.historisation.service.JaversService;
 import lombok.val;
-import org.javers.core.ChangesByCommit;
-import org.javers.core.ChangesByObject;
+import org.javers.core.Changes;
 import org.javers.core.Javers;
+import org.javers.core.commit.CommitId;
+import org.javers.core.commit.CommitMetadata;
 import org.javers.core.diff.Change;
+import org.javers.core.diff.changetype.NewObject;
 import org.javers.core.diff.changetype.ReferenceChange;
 import org.javers.core.diff.changetype.ValueChange;
+import org.javers.core.metamodel.object.InstanceId;
 import org.javers.core.metamodel.object.SnapshotType;
 import org.javers.repository.jql.QueryBuilder;
 import org.javers.shadow.Shadow;
@@ -20,15 +22,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
-
-import static java.util.Comparator.comparing;
+import java.util.stream.Collectors;
 
 @RestController
 public class HierarchyController {
 
     @Autowired
     HierarchyService service;
+
+    @Autowired
+    JaversService javersService;
 
     @Autowired
     Javers javers;
@@ -45,6 +51,14 @@ public class HierarchyController {
         val frodo = service.findByName("Frodo");
 
         service.giveRaise(frodo.getId(), 100);
+    }
+
+    @GetMapping("/validate")
+    public void validate() {
+
+        val frodo = service.findByName("Frodo");
+
+        service.validate(frodo.getId());
     }
     
     
@@ -88,85 +102,112 @@ public class HierarchyController {
     
     @GetMapping("/purge")
     public void purge() {
-        // pour supprimer des Commit, il faudrait attaquer directement les tables jv_commit, etc...
-        // javers.commit()
+
+        // supprime le commit correspondant au dernier SNAPSHOT
+        val frodo = service.findByName("Frodo");
+        javersService.removeLastCommit(frodo.getId(), Employee.class);
+      
     }
     
-    @GetMapping("/changes") 
+    
+    @GetMapping("/changes")
     public History changesForFrodo() {
         val history = new History();
-        
+
         val frodo = service.findByName("Frodo");
-
-        // récupère tous les changements, que ce soit des création ou modif
-        val changes = javers.findChanges(
-                QueryBuilder.byInstanceId(frodo.getId(), Employee.class)
-                        //.withSnapshotType(SnapshotType.INITIAL)
-                        .build());
-
-        System.out.println("Employee Frodo changes : ");
-        changes.groupByCommit().forEach(byCommit -> {
-            System.out.println("commit " + byCommit.getCommit().getId());
-            
-            // sur un commit initial, on retourne un historique basique
-            System.out.println("'" + byCommit.getCommit().getId().value() + "'");
-            if("1.00".equals(byCommit.getCommit().getId().value())) {
-                history.addEvent("Creating Employee " + frodo.getName(),
-                        byCommit.getCommit().getCommitDate());
-                return; // skip to the next iteration
-            }
-            
-            byCommit.groupByObject().forEach(byObject -> {
-                // System.out.println("* changes on " + byObject.getGlobalId().value() + " : ");
-                byObject.get().forEach(change -> {
-                    if(change instanceof ValueChange) {
-                        val valueChange = (ValueChange) change;
-                        history.addEvent("" + valueChange.getPropertyName() + " has been changed",
-                                change.getCommitMetadata().get().getCommitDate());
-                    }  else if(change instanceof ReferenceChange) {
-                        val referenceChange = (ReferenceChange) change;
-                        System.out.println("right :" + referenceChange.getRightObject().get());
-                        history.addEvent("A new BankDetails has been added",
-                                change.getCommitMetadata().get().getCommitDate());
-                        
-                    } else {
-                        history.addEvent("Another change has been done",
-                                change.getCommitMetadata().get().getCommitDate());
-                    }
-                    
-                    System.out.println("  - " + change);
-                });
-                
-            });
-        });
-
-        if(frodo.getBankDetails() == null)
-            return history;
         
-        // je vois pas d'autres solutions que de vérifier également dans les objets liés
-        System.out.println("Employee Frodo Bank Details changes ");
-        val bdChanges = javers.findChanges(
-                QueryBuilder.byInstanceId(frodo.getBankDetails().getId(), BankDetails.class).
-                        withSnapshotTypeUpdate().build());
+        // il n'existe pas de possibilité de faire un findCommit qui incluerait toutes les modifs ?
+        // il faut d'abord recherche sur un type d'entité, récupérer les commit liés à ces entités.
+        // puis réintérroger les différentes entités qui correspondent à ces commits
+        val initialCommit = findInitialCommitFor(frodo);
+        
+        
+        History.Line line = new History.Line(initialCommit.getCommitDate());
+        line.addEvent(new History.Event("Creating Employee " + frodo.getName()));
+        history.addLine(line);
+                
+        val commitIds = findUpdateCommitIdsFor(frodo);
 
-        bdChanges.groupByCommit().forEach(byCommit -> {
-            System.out.println("commit " + byCommit.getCommit().getId());
-            byCommit.groupByObject().forEach(byObject -> {
-                System.out.println("* changes on " + byObject.getGlobalId().value() + " : ");
-                byObject.get().forEach(change -> {
-                    if(change instanceof ValueChange) {
-                        val valueChange = (ValueChange) change;
-                        history.addEvent("BankDetails value " + valueChange.getPropertyName() + " has been changed", 
-                                change.getCommitMetadata().get().getCommitDate());
-                    }
-                    System.out.println("  - " + change);
+        commitIds.forEach(commitId -> {
+            
+            val commitChanges = findChangesWithCommitId(commitId, Employee.class, BankDetails.class);
+           
+            // récupère tous les changements liés sur les autres entités
+            commitChanges.groupByCommit().forEach( commit -> {
+                System.out.println("props : " + commit.getCommit().getProperties());
+                val commitComment = commit.getCommit().getProperties().get("comment");
+                System.out.println("commitComment : " + commitComment);
+                History.Line updateLine = new History.Line(commit.getCommit().getCommitDate());
+                updateLine.setComment(commitComment);
+                commit.get().forEach( change -> {
+                    // TODO si le commit inclue un changement de STATUS, alors il n'est pas nécessaire
+                    //      d'indiquer tous les autres changements. on n'indique que le changement de status et c'est tout
+                    updateLine.addEvent(convertChangeToHistoryEvent(change));
                 });
+                history.addLine(updateLine);
             });
         });
-         
+        
         // tri
-        history.getEvents().sort(comparing(HistoryEvent::getDate));
+        history.getLines().sort(Comparator.comparing(History.Line::getDate));
         return history;
+    }
+
+    
+       
+    
+    private History.Event convertChangeToHistoryEvent(Change change) {
+        
+        if(change instanceof ValueChange) {
+            val valueChange = (ValueChange) change;
+            String msg = "" + valueChange.getPropertyName() + " changed from " + valueChange.getLeft() + " to " + valueChange.getRight();
+            return new History.Event(msg);
+        }
+        if(change instanceof NewObject) {
+            return new History.Event("Creating new Employee");
+        }
+        if(change instanceof ReferenceChange) {
+            val refChange = (ReferenceChange) change;
+            return new History.Event("" +  refChange.getPropertyName() + "has been affected to a new object");
+        }
+
+        System.out.println("EVENT NOT CONVERTED : " + change.getClass().getCanonicalName());
+        return new History.Event("UNDEFINED : " + change );
+        
+    }
+    
+    private List<CommitId> findAllCommitIds() {
+        val changes = javers.findChanges(QueryBuilder.anyDomainObject().build());
+        return changes.groupByCommit().stream().map(byCommit -> byCommit.getCommit().getId()).collect(Collectors.toList());
+    }
+
+    private List<CommitId> findAllCommitIdsFor(Class clazz) {
+        val changes = javers.findChanges(QueryBuilder.byClass(clazz).build());
+        return changes.groupByCommit().stream().map(byCommit -> byCommit.getCommit().getId()).collect(Collectors.toList());
+    }
+    
+    private List<CommitId> findAllCommitIdsFor(Class clazz, Long id) {
+        val changes = javers.findChanges(QueryBuilder.byInstanceId(id, clazz).build());
+        return changes.groupByCommit().stream().map(byCommit -> byCommit.getCommit().getId()).collect(Collectors.toList());
+    }
+
+    private List<CommitId> findAllCommitIdsFor(Object object) {
+        val changes = javers.findChanges(QueryBuilder.byInstance(object).build());
+        return changes.groupByCommit().stream().map(byCommit -> byCommit.getCommit().getId()).collect(Collectors.toList());
+    }
+
+    private CommitMetadata findInitialCommitFor(Object object) {
+        val changes = javers.findChanges(QueryBuilder.byInstance(object).withSnapshotType(SnapshotType.INITIAL).build());
+        return changes.groupByCommit().stream().map(byCommit -> byCommit.getCommit()).findFirst().get();
+    }
+
+    private List<CommitId> findUpdateCommitIdsFor(Object object) {
+        val changes = javers.findChanges(QueryBuilder.byInstance(object).withSnapshotTypeUpdate().build());
+        return changes.groupByCommit().stream().map(byCommit -> byCommit.getCommit().getId()).collect(Collectors.toList());
+    }
+    
+    private Changes findChangesWithCommitId(CommitId commitId, Class ... classes) {
+        return javers.findChanges(QueryBuilder.byClass(classes).withCommitId(commitId).build());
     }
     
     

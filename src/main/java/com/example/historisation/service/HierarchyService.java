@@ -2,16 +2,20 @@ package com.example.historisation.service;
 
 import com.example.historisation.domain.BankDetails;
 import com.example.historisation.domain.Employee;
+import com.example.historisation.domain.Status;
 import com.example.historisation.repository.BankDetailsRepository;
 import com.example.historisation.repository.EmployeeRepository;
 import lombok.val;
 import org.javers.core.Javers;
+import org.javers.repository.jql.JqlQuery;
+import org.javers.repository.jql.QueryBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import javax.transaction.Transactional;
 
-import static com.example.historisation.domain.Position.*;
+import java.util.HashMap;
+
 import static javax.transaction.Transactional.TxType.REQUIRES_NEW;
 
 @Service
@@ -30,29 +34,35 @@ public class HierarchyService {
     public Employee initStructure(){
         System.out.println("initializing structure");
 
-        val gandalf = new Employee("Gandalf", 10_000, CEO, "Middle-earth");
-        val elrond = new Employee("Elrond", 8_000, CFO, "Rivendell");
-        val aragorn = new Employee("Aragorn", 8_000, CTO, "Minas Tirith");
-        val thorin = new Employee("Thorin", 5_000, TEAM_LEAD, "Lonely Mountain");
-        val frodo = new Employee("Frodo", 3_000, DEVELOPER, "Shire");
-        val fili = new Employee("Fili", 3_000, DEVELOPER, "Lonely Mountain");
-        val kili = new Employee("Kili", 3_000, DEVELOPER, "Lonely Mountain");
-        val bifur = new Employee("Bifur", 3_000, DEVELOPER, "Lonely Mountain");
-        val bombur = new Employee("Bombur", 2_000, SCRUM_MASTER, "Lonely Mountain");
+        val gandalf = new Employee("Gandalf", 10_000, "Middle-earth");
+        val elrond = new Employee("Elrond", 8_000, "Rivendell");
+        val aragorn = new Employee("Aragorn", 8_000, "Minas Tirith");
+        val thorin = new Employee("Thorin", 5_000, "Lonely Mountain");
+        val frodo = new Employee("Frodo", 3_000, "Shire");
+        val fili = new Employee("Fili", 3_000, "Lonely Mountain");
+        val kili = new Employee("Kili", 3_000, "Lonely Mountain");
+        val bifur = new Employee("Bifur", 3_000, "Lonely Mountain");
+        val bombur = new Employee("Bombur", 2_000, "Lonely Mountain");
 
-        gandalf.addSubordinates(elrond, aragorn);
-        aragorn.addSubordinate(thorin);
-        thorin.addSubordinates(frodo, fili, kili, bifur, bombur);
-
-        employeeRepository.save(gandalf);
+        val bd = new BankDetails("IBAN123");
+        frodo.addBankDetails(bd);
+        bankDetailsRepository.save(bd);
         
+        employeeRepository.save(gandalf);
+        employeeRepository.save(frodo);
+                
         // commit manuel : l'avantage de cette approche est de pouvoir gérer plus finement
         // notamment si des entités sont dans un état DRAFT par exemple.
         // dans ce cas, il n'est pas nécessaire de les commiter
         javers.commit("author", gandalf);
+        
+        javers.commit("author", frodo);
 
         return gandalf;
     }
+    
+    
+    
 
     @Transactional(REQUIRES_NEW)
     public void giveRaise(Long employeeId, int raise) {
@@ -61,15 +71,47 @@ public class HierarchyService {
         employee.giveRaise(raise);
         employeeRepository.save(employee);
         
-        javers.commit("author", employee);
+        // on lui change son IBAN également
+        employee.getBankDetails().setIban("IBAN987");
+        
+        employee.setStatus(Status.MODIFIED_BUT_NOT_REVALIDATED);
+        
+        // récupère le dernier SNAPSHOT : tant que le statu est MODIFIED_BUT_NOT_REVALIDATED
+        // il n'est pas nécessaire de stocker toutes les versions on ne gardera que le dernier
+        // pour éviter de ne stocker des modifications pour rien;
+        // val lastSnapshots = javers.findSnapshots(QueryBuilder.byInstance(employee).withSnapshotTypeUpdate().limit(1).build());
+        val latestSnapshot = javers.getLatestSnapshot(employeeId, Employee.class);
+        
+        if(latestSnapshot.isPresent()) {
+
+            System.out.println(latestSnapshot);
+            
+        }
+                
+                
+        // tant qu'il n'a pas été validé au moins une fois, 
+        // alors on n'enregistre pas son historique.
+        if(employee.getStatus() != Status.BEING_CREATED) {
+            // dans ce cas, Employee et BankDetails seront commité dans le meme
+            javers.commit("author", employee);
+        }
+        
+        
+        
     }
 
     @Transactional(REQUIRES_NEW)
-    public void updateSalary(Employee employee, int salary) {
-        employee.updateSalary(salary);
-        employeeRepository.save(employee);
+    public void validate(Long employeeId) {
 
-        javers.commit("author", employee);
+        val employee = employeeRepository.findById(employeeId).get();
+
+        employee.setStatus(Status.VALIDATED);
+        employeeRepository.save(employee);
+        
+        val properties = new HashMap<String, String>();
+        properties.put("comment", "VALIDATION CERTIFIEE XXXX");
+        
+        javers.commit("author", employee, properties);
     }
 
     @Transactional(REQUIRES_NEW)

@@ -34,5 +34,4 @@ At the end of the day, when you show a change log to your users, it should look 
 https://stackoverflow.com/questions/57391748/how-to-clean-up-snapshots-and-commits-after-a-period-of-time-in-javers
 
 
-
 Redémarrage à chaud : https://stackoverflow.com/questions/33349456/how-to-make-auto-reload-with-spring-boot-on-idea-intellij

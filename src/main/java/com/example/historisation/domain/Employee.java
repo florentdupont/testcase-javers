@@ -7,9 +7,7 @@ import lombok.Setter;
 import org.javers.core.metamodel.annotation.TypeName;
 
 import javax.persistence.*;
-import java.util.HashSet;
 import java.util.Objects;
-import java.util.Set;
 
 import static javax.persistence.CascadeType.ALL;
 import static javax.persistence.GenerationType.IDENTITY;
@@ -27,12 +25,6 @@ public class Employee {
     @Getter
     String name;
     
-    @ManyToOne
-    Employee boss;
-    
-    @OneToMany(cascade = ALL, mappedBy = "boss")
-    Set<Employee> subordinates = new HashSet();
-
     @Getter
     @Embedded
     Address address;
@@ -43,42 +35,24 @@ public class Employee {
                 
     Integer salary;
 
-    Position position;
+    @Getter @Setter
+    Status status;
+    
+    
 
 
-    public Employee(String name, Integer salary, Position position, String city) {
+    public Employee(String name, Integer salary, String city) {
         this.name = name;
         this.address = new Address(city);
         this.salary = salary;
-        this.position = position;
+        this.status = Status.BEING_CREATED;
     }
 
-    Employee getSubordinate(String name) {
-        return subordinates.stream().filter(it -> it.name.equals(name)).findFirst().get();
-    }
     
     public void addBankDetails(BankDetails bankDetails) {
         this.bankDetails = bankDetails;
     }
-
-    public void addSubordinate(Employee subordinate) {
-        subordinate.boss = this;
-        this.subordinates.add(subordinate);
-    }
-
-    public void addSubordinates(Employee... subordinates) {
-        for(Employee it : subordinates) {
-            addSubordinate(it);
-        }
-    }
     
-    
-    int getLevel() {
-        if (boss == null) 
-            return 0;
-        return boss.getLevel() + 1;
-    }
-
 
     public void giveRaise(int raise) {
         salary += raise;
@@ -93,11 +67,9 @@ public class Employee {
     public String toString() {
         return "Employee{" +
                 "name='" + name + '\'' +
-                ", boss=" + boss +
-                ", subordinates=" + subordinates +
                 ", address=" + address +
                 ", salary=" + salary +
-                ", position=" + position +
+                ", status=" + status +
                 '}';
     }
 
